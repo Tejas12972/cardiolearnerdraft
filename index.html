@@ -5851,6 +5851,11 @@ const coronaryMap = {
             currentPathology = pathologyKey;
             loadedPathology = pathologyKey;
             
+            // Store pathology state on chart for legend filter access
+            if (pvLoopChart) {
+                pvLoopChart.currentPathology = pathologyKey;
+            }
+            
             // Highlight selected card
             document.querySelectorAll('.pathology-card').forEach(card => {
                 card.classList.remove('selected');
@@ -5900,6 +5905,25 @@ const coronaryMap = {
                 hfrefBox.style.display = showHfrefControls ? 'block' : 'none';
                 if (showHfrefControls) {
                     updateHfrefToggleActiveState();
+                    // Force chart update to refresh legend when HFrEF is selected
+                    // Update with 'default' mode to ensure legend is refreshed
+                    if (pvLoopChart) {
+                        pvLoopChart.currentPathology = 'hfref';
+                        pvLoopChart.update('default');
+                    }
+                } else {
+                    // When switching away from HFrEF, disable compare and clear the dataset
+                    hfrefCompareEnabled = false;
+                    const hfrefCheckbox = document.getElementById('hfrefCompareCheckbox');
+                    if (hfrefCheckbox) {
+                        hfrefCheckbox.checked = false;
+                    }
+                    updateHfrefCompareDataset();
+                    // Force chart update to refresh legend when switching away
+                    if (pvLoopChart) {
+                        pvLoopChart.currentPathology = pathologyKey;
+                        pvLoopChart.update('default');
+                    }
                 }
             }
 
@@ -6258,8 +6282,14 @@ const coronaryMap = {
             attachEventListeners();
             initQuizChart();
             attachQuizListeners();
+            
+            // Ensure HFrEF compare is disabled on initial load
+            hfrefCompareEnabled = false;
+            currentPathology = 'normal';
+            
             updateCalculations();
             updateFunctionCurves();
+            
             // Show normal key concepts banner on initial load
             updatePathologyInfo('normal');
             const closeAnswerBtn = document.getElementById('closeAnswerModal');
@@ -6338,7 +6368,28 @@ const coronaryMap = {
                             labels: {
                                 filter: function(item, chart) {
                                     // Hide helper datasets from legend
-                                    return item.text !== 'Valve Events' && item.text !== 'Drag Handles';
+                                    if (item.text === 'Valve Events' || item.text === 'Drag Handles') {
+                                        return false;
+                                    }
+                                    // Show HFrEF compare legend ONLY when HFrEF pathology is selected
+                                    // The actual line visibility is controlled by the dataset.hidden property
+                                    if (item.text === 'HFrEF compare') {
+                                        try {
+                                            // Check pathology state from chart object or global variable
+                                            const pathState = chart.currentPathology || (typeof currentPathology !== 'undefined' ? currentPathology : 'normal');
+                                            // Only show legend when HFrEF pathology is selected
+                                            if (pathState === 'hfref') {
+                                                // Check if dataset exists
+                                                if (typeof item.datasetIndex !== 'undefined' && chart.data.datasets && chart.data.datasets[item.datasetIndex]) {
+                                                    return true; // Show legend when HFrEF is selected
+                                                }
+                                            }
+                                            return false; // Hide legend when not in HFrEF mode
+                                        } catch (e) {
+                                            return false;
+                                        }
+                                    }
+                                    return true;
                                 }
                             }
                         },
@@ -6348,6 +6399,11 @@ const coronaryMap = {
                     }
                 }
             });
+            
+            // Initialize pathology state on chart instance
+            if (pvLoopChart) {
+                pvLoopChart.currentPathology = 'normal';
+            }
             
             // Cardiac & Vascular Function Curves
             const fcCtx = document.getElementById('functionCurvesChart').getContext('2d');
@@ -7392,6 +7448,13 @@ const coronaryMap = {
                     fill: false,
                     hidden: true
                 });
+            } else {
+                // Ensure existing HFrEF compare dataset is hidden if not in HFrEF mode
+                const compareDataset = pvLoopChart.data.datasets[4];
+                if (compareDataset && (currentPathology !== 'hfref' || !hfrefCompareEnabled)) {
+                    compareDataset.data = [];
+                    compareDataset.hidden = true;
+                }
             }
             
             // Dynamic scale adjustment based on pathology
@@ -7476,13 +7539,22 @@ const coronaryMap = {
         }
 
         function updateHfrefCompareDataset() {
-            if (!pvLoopChart || pvLoopChart.data.datasets.length < 5) return;
+            if (!pvLoopChart) return;
+            
+            // Ensure dataset exists before checking length
+            if (pvLoopChart.data.datasets.length < 5) {
+                // Dataset doesn't exist yet, nothing to clear
+                return;
+            }
+            
             const compareDataset = pvLoopChart.data.datasets[4];
             if (!compareDataset) return;
 
+            // Always clear and hide if not in HFrEF mode or compare not enabled
             if (currentPathology !== 'hfref' || !hfrefCompareEnabled) {
                 compareDataset.data = [];
                 compareDataset.hidden = true;
+                // Force chart update to ensure legend reflects hidden state
                 pvLoopChart.update('none');
                 return;
             }
@@ -8267,6 +8339,20 @@ const coronaryMap = {
             // Reset both pathology trackers
             currentPathology = 'normal';
             loadedPathology = 'normal';
+            
+            // Hide HFrEF compare panel and turn off compare when returning home
+            // Do this BEFORE updateCalculations() to ensure the dataset is cleared
+            const hfrefBox = document.getElementById('hfrefCompareBox');
+            if (hfrefBox) {
+                hfrefBox.style.display = 'none';
+            }
+            const hfrefCheckbox = document.getElementById('hfrefCompareCheckbox');
+            if (hfrefCheckbox) {
+                hfrefCheckbox.checked = false;
+            }
+            hfrefCompareEnabled = false;
+            // Explicitly clear the HFrEF compare dataset immediately
+            updateHfrefCompareDataset();
             
             // Remove selection from all pathology cards
             document.querySelectorAll('.pathology-card').forEach(card => {
